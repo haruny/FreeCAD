@@ -49,10 +49,7 @@ bool(Draft_rc.__name__)
 
 
 def _quantity(st):
-    # workaround for improper handling of plus sign
-    # in Building US unit system
-    # https://github.com/FreeCAD/FreeCAD/issues/11345
-    return U.Quantity(st.replace("+", "--")).Value
+    return U.Quantity(st).Value
 
 
 class TaskPanelPolarArray:
@@ -282,6 +279,9 @@ class TaskPanelPolarArray:
             if value is not None:
                 setattr(constrained, key, value)
         return constrained
+
+    def has_point_constraints(self):
+        return self.locks.any_locked()
 
     def get_axis(self):
         """Get the axis that will be used for the array. NOT IMPLEMENTED.

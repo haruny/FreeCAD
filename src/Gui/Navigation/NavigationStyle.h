@@ -37,6 +37,7 @@
 
 #include <QEvent>
 #include <QAction>
+#include <QObject>
 #include <Base/BaseClass.h>
 #include <Base/SmartPtrPy.h>
 #include <Gui/Namespace.h>
@@ -61,6 +62,21 @@ class View3DInventorViewer;
 class NavigationAnimator;
 class AbstractMouseSelection;
 class NavigationAnimation;
+class ViewProviderDocumentObject;
+
+class NavigationStyleContextMenuReceiver: public QObject
+{
+    Q_OBJECT
+
+public:
+    NavigationStyleContextMenuReceiver(ViewProviderDocumentObject* viewProvider, QObject* parent);
+
+public Q_SLOTS:
+    void startEditing();
+
+private:
+    ViewProviderDocumentObject* viewProvider {nullptr};
+};
 
 /**
  * @author Werner Mayer
@@ -137,6 +153,27 @@ public:
     {
         Interactive,
         Programmatic
+    };
+
+    /** Options for an explicit mouse-drag orbit sequence. */
+    struct OrbitDragOptions
+    {
+        enum class CenterMode
+        {
+            FocalPoint,         /**< Orbit around the current viewer focal point. */
+            SceneBoundingSphere /**< Orbit around the scene bounding sphere center. */
+        };
+
+        /** Center used for the constrained orbit drag. */
+        CenterMode centerMode = CenterMode::FocalPoint;
+        /** Minimum camera depth as a multiple of the scene bounding sphere radius. Values <= 0
+         * disable it. */
+        float minDistanceFactor = 0.0F;
+        /** Near/far clipping half range as a multiple of the scene bounding sphere radius. Values
+         * <= 0 leave clipping unchanged. */
+        float clippingRadiusFactor = 0.0F;
+        /** Multiplier applied to the drag distance before updating the orbit. */
+        float sensitivity = 1.0F;
     };
 
 public:
@@ -245,6 +282,12 @@ public:
 
     void setOrbitStyle(OrbitStyle style);
     OrbitStyle getOrbitStyle() const;
+    /** Starts an explicit orbit drag with optional camera and clipping constraints. */
+    void beginOrbitDrag(const OrbitDragOptions& options);
+    /** Applies one incremental orbit drag update using normalized projector positions. */
+    void updateOrbitDrag(SbVec2f curpos, SbVec2f prevpos);
+    /** Ends the active explicit orbit drag and clears its constraints. */
+    void endOrbitDrag();
 
     SbBool isViewing() const;
     void setViewing(SbBool);
@@ -296,13 +339,35 @@ protected:
 
     SbBool handleEventInForeground(const SoEvent* const e);
     virtual SbBool processSoEvent(const SoEvent* const ev);
+    bool offerEventToViewer(const SoEvent* const ev);
     void syncWithEvent(const SoEvent* const ev);
     virtual void openPopupMenu(const SbVec2s& position);
 
 private:
+    struct OrbitDragState
+    {
+        SbVec3f center;
+        float minDistance = 0.0F;
+        float clippingRadius = 0.0F;
+        float sensitivity = 1.0F;
+    };
+
     void spinInternal(const SbVec2f& pointerpos, const SbVec2f& lastpos);
     void spinSimplifiedInternal(const SbVec2f curpos, const SbVec2f prevpos);
+    void spinSimplifiedInternal(
+        const SbVec2f curpos,
+        const SbVec2f prevpos,
+        const SbVec3f* rotationCenter
+    );
+    bool getObjectBoundingSphere(SbSphere& sphere) const;
     bool getObjectBoundingBoxCenter(SbVec3f& center) const;
+    void applyOrbitDragCameraConstraints(const OrbitDragState& state);
+    bool isDoubleClickCandidate(const SoMouseButtonEvent* event) const;
+    void deferMouseDownEvent(const SoMouseButtonEvent* event);
+    void clearDeferredMouseDownEvent();
+    void replayDeferredMouseDownEvent();
+    void recordClickCandidate(const SoMouseButtonEvent* event);
+    void clearClickCandidateState();
 
 protected:
     void clearLog();
@@ -313,6 +378,12 @@ protected:
     void updateSelectionStartPosition(SbBool press, const SbVec2s& position);
     void setSelectionStartPosition(const SbVec2s& position);
     void clearSelectionStartPosition();
+    bool handleSelectionDragMotion(
+        const SoLocation2Event* const ev,
+        ViewerMode& newmode,
+        bool additiveSelection = false,
+        bool allowBoxSelection = true
+    );
     bool tryStartBoxSelection(const SoLocation2Event* const ev, bool additiveSelection = false);
     bool tryStartBoxSelection(
         const SbVec2s& startPosition,
@@ -334,7 +405,9 @@ protected:
     NavigationAnimator* animator;
     SbBool animationEnabled;
     ViewerMode currentmode;
-    SoMouseButtonEvent mouseDownConsumedEvent;
+    SoMouseButtonEvent deferredMouseDownEvent;
+    bool hasDeferredMouseDownEvent {false};
+    SbTime lastClickCandidateTime;
     SbVec2f lastmouseposition;
     SbVec2s globalPos;
     SbVec2s localPos;
@@ -382,6 +455,7 @@ private:
     SbBool rotationCenterFound;
     SbBool rotationCenterIsScenePointAtCursor;
     NavigationStyle::RotationCenterModes rotationCenterMode;
+    std::optional<OrbitDragState> orbitDrag;
     float sensitivity;
     SbBool resetcursorpos;
 

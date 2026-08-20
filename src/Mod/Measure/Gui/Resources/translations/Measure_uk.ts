@@ -310,7 +310,7 @@
     <message>
       <location filename="../../../App/AppMeasure.cpp" line="119"/>
       <source>Distance</source>
-      <translation>Відстань</translation>
+      <translation>Відстань Х</translation>
     </message>
     <message>
       <location filename="../../../App/AppMeasure.cpp" line="127"/>
@@ -336,6 +336,11 @@
       <location filename="../../../App/AppMeasure.cpp" line="159"/>
       <source>Area</source>
       <translation>Площа</translation>
+    </message>
+    <message>
+      <location filename="../../../App/AppMeasure.cpp" line="167"/>
+      <source>Diameter</source>
+      <translation>Діаметр</translation>
     </message>
     <message>
       <location filename="../../../App/AppMeasure.cpp" line="175"/>

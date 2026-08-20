@@ -137,6 +137,9 @@ class OpenSBPPost(PostProcessor):
         for prop in common_props:
             if prop["name"] == "file_extension":
                 prop["default"] = "sbp"
+            elif prop["name"] == "f_for_rapid_moves":
+                # Use G0's F by default
+                prop["default"] = True
 
             # FIXME: show but don't allow edit in UI
 
@@ -243,9 +246,18 @@ class OpenSBPPost(PostProcessor):
         # These schema defaults are r/o: force them
         for property_name in (
             "supported_commands drill_cycles_to_translate"
-            " translate_drill_cycles output_tool_length_offset".split(" ")
+            " translate_drill_cycles output_tool_length_offset"
+            " f_for_rapid_moves".split(  # FIXME: the merge logic doesn't respect our updated default
+                " "
+            )
         ):
             self.values[property_name.upper()] = schema[property_name]["default"]
+
+    def _convert_start_section(self, section_name, sublist):
+        # need to note that we are starting a section (file), so "per section" stuff...
+        self._first_probe_open = True
+
+        super()._convert_start_section(section_name, sublist)
 
     def convert_command_to_gcode(self, command: Path.Command) -> str:
 
@@ -263,6 +275,8 @@ class OpenSBPPost(PostProcessor):
     def _convert_move(self, command):
         # FIXME: use Path.Command world _add_line_numbers when implemented
         gcode = super()._convert_move(command)
+        if gcode is None or "" == gcode.strip():
+            return None
 
         if self.values["OUTPUT_LINE_NUMBERS"]:
             # It will be taken care of later (everything line-numbered)
@@ -308,8 +322,8 @@ class OpenSBPPost(PostProcessor):
 
         params = command.Parameters
 
-        # We may be axis-modal
-        machine_state_params = self._modal_state  # FIXME self.machine_state.getState()
+        # We may be axis-modal, restore "missing" params
+        machine_state_params = self.machine_state.previous
         params.update(
             {
                 p: machine_state_params[p]
@@ -334,14 +348,13 @@ class OpenSBPPost(PostProcessor):
         RequiredState = "XYZ"
         if modal_missing := [p for p in RequiredState if machine_state_params[p] is None]:
             raise ValueError(
-                f"Arcs require a previous {''.join(modal_missing)} (from some movement) for {command}"
+                f"Arcs require a previous {''.join(modal_missing)} (from some movement) for {command}, previous machine-state = {machine_state_params}"
             )
 
         # GCODE if no dZ
 
-        if (
-            params["Z"] == machine_state_params["Z"]
-        ):  # nb: works ok if Z is omitted, and state.Z is None (never seen)
+        if params["Z"] == machine_state_params["Z"]:
+            # nb: works ok if Z is omitted, and state.Z is None (never seen)
             return super()._convert_arc_move(command)
 
         # HELIX, requires opensbp CG, command
@@ -412,7 +425,7 @@ class OpenSBPPost(PostProcessor):
 
             #
             z_distance = abs(start_position[2] - end_position[2])
-            xy_distance, total_distance = arc_length_3d(
+            xy_distance, _ = arc_length_3d(
                 center,
                 start_position,
                 end_position,
@@ -433,7 +446,7 @@ class OpenSBPPost(PostProcessor):
             # format_parameter is going to *60 so we have to /60
             return f"VS,{self.format_parameter('F', vs_speeds[0]/60)},{self.format_parameter('F', vs_speeds[1]/60)}"
 
-        last_position = self._modal_state  # FIXME: self.machine_state.getState()
+        last_position = self.machine_state.previous
         speed_command = calculate_arc_speed(command.Name, params, last_position=last_position)
         if speed_command:
             output.append(speed_command)
@@ -545,31 +558,38 @@ class OpenSBPPost(PostProcessor):
             filename += ".txt"
         filename = self._quote(filename)
 
-        rez = [
-            # we already handled the probe-open comment
-            "C#,90",  # Loads "my variables", notably &my_ZzeroInput
-            f'OPEN "{filename}" FOR OUTPUT as #1',
-        ]
+        rez = []
 
-        # only insert subroutines once
+        # only insert subroutines once per section FIXME: need to be told when starting a section
         if self._first_probe_open:
             self._first_probe_open = False
-            self.values["POST_JOB"] += textwrap.dedent("""\
-                GOTO SkipProbeSubRoutines
-                CaptureZPos:
-                  ' for g38.2 probe, write the data on probe-contact
-                  ' and set flag for didn't-fail
-                  ' xyzab
-                  WRITE #1; %(1); " "; %(2); " "; %(3); " "; %(4); " "; %(5)
-                  &hit = 1
-                  RETURN
-                FailedToTouch:
-                  ' for g38.2 probe, when
-                  ' failed to trigger w/in movement
-                  MSGBOX(Failed to touch...Exiting,16,Probe Failed) # fixme: which job/op label, and file?
-                  END
-                SkipProbeSubRoutines:
-            """).rstrip()
+            rez.extend(textwrap.dedent("""\
+                    ' Loads my-variables, notably my_ZzeroInput
+                    C#,90
+                    ' PROBE SUBROUTINE
+                    GOTO SkipProbeSubRoutines
+                    CaptureZPos:
+                      ' for g38.2 probe, write the data on probe-contact
+                      ' and set flag for didn't-fail
+                      ' xyzab
+                      WRITE #1; %(1); " "; %(2); " "; %(3); " "; %(4); " "; %(5)
+                      &hit = 1
+                      RETURN
+                    FailedToTouch:
+                      ' for g38.2 probe, when
+                      ' failed to trigger w/in movement
+                      MSGBOX(Failed to touch...Exiting,16,Probe Failed) # fixme: which job/op label, and file?
+                      END
+                    SkipProbeSubRoutines:
+                    ' ------
+                """).rstrip().split("\n"))
+
+        rez.extend(
+            [
+                # we already handled the probe-open comment
+                f'OPEN "{filename}" FOR OUTPUT as #1',
+            ]
+        )
 
         return "\n".join(rez)
 
@@ -590,12 +610,14 @@ class OpenSBPPost(PostProcessor):
         """
 
         # We are being strict here, Z motion only
+        excess = set(command.Parameters.keys()) - set(list("ZF"))
+        if len(excess) > 0:
+            raise Exception(f"A probing move (G38.2) must only have Z and F, saw {command}")
         required = {p: v for p, v in command.Parameters.items() if p in "ZF"}
-        # FIXME: allow default F from MachineState when implemented?
+        if self.machine_state.F is not None:
+            required["F"] = self.machine_state.F
         if len(required) != 2:
             raise Exception(f"A probing move (G38.2) must have a Z and F, only saw: {command}")
-        if len(command.Parameters) > 2:
-            raise Exception(f"A probing move (G38.2) should only have Z and F, saw {command}")
 
         # G1, we aren't jogging, we are doing a slow, deliberate move, i.e. ~"feed".
         probe_movement = self._convert_move(Path.Command("G1", required))
@@ -610,7 +632,7 @@ class OpenSBPPost(PostProcessor):
 
         return rez
 
-    def _optimize_gcode(self, header_lines, gcode_lines) -> str:
+    def _optimize_gcode(self, gcode_lines) -> str:
         # There may be opensbp in the stream
         # so, you can't know the state for modal and axis-modal
         # FIXME: this override goes away when Processor's does
@@ -625,7 +647,7 @@ class OpenSBPPost(PostProcessor):
         self.values["OUTPUT_DUPLICATE_COMMANDS"] = True
 
         try:
-            return super()._optimize_gcode(header_lines, gcode_lines)
+            return super()._optimize_gcode(gcode_lines)
         finally:
             for k in disable:
                 self.values[k] = was[k]

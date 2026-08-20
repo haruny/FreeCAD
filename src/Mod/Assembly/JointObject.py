@@ -1234,7 +1234,15 @@ class ViewProviderJoint:
                 Since no data were serialized nothing needs to be done here."""
         return None
 
+    def setupContextMenu(self, vobj, menu):
+        action = menu.addAction(translate("Assembly", "Edit Joint"))
+        action.triggered.connect(lambda: self.editJoint(vobj))
+        return False
+
     def doubleClicked(self, vobj):
+        return self.editJoint(vobj)
+
+    def editJoint(self, vobj):
         App.ActiveDocument.abortTransaction()  # Close the auto-transaction
 
         task = Gui.Control.activeTaskDialog()
@@ -1260,6 +1268,161 @@ class ViewProviderJoint:
 
     def canDelete(self, _obj):
         return True
+
+
+class RigidGroupJoint:
+    def __init__(self, joint, objects_to_rigid_group):
+        joint.Proxy = self
+        self.joint = joint
+
+        joint.addExtension("App::SuppressibleExtensionPython")
+
+        joint.addProperty(
+            "App::PropertyLinkList",
+            "ObjectsToRigidGroup",
+            "RigidGroup",
+            QT_TRANSLATE_NOOP("App::Property", "List of references to compnents to group together"),
+        )
+        joint.ObjectsToRigidGroup = objects_to_rigid_group
+
+        joint.addProperty(
+            "App::PropertyPlacementList",
+            "RigidPlacements",
+            "RigidGroup",
+            "Relative placements for restore",
+        )
+        joint.setPropertyStatus("RigidPlacements", "Hidden")
+        joint.setPropertyStatus("RigidPlacements", "ReadOnly")
+
+        self._write_rigid_placements(joint, [])
+        self.updateStoredPositions(joint, True)
+
+    def dumps(self):
+        return None
+
+    def loads(self, state):
+        return None
+
+    def getAssembly(self, joint):
+        for obj in joint.InList:
+            if obj.isDerivedFrom("Assembly::AssemblyObject"):
+                return obj
+            elif obj.isDerivedFrom("Assembly::AssemblyLink"):
+                return self.getAssembly(obj)
+        return None
+
+    def _validMembers(self, fp):
+        members = []
+        seen = set()
+
+        for obj in getattr(fp, "ObjectsToRigidGroup", ()) or ():
+            name = getattr(obj, "Name", None)
+
+            if not obj or not name or name in seen:
+                continue
+
+            if not hasattr(obj, "Placement") or obj.getPropertyByName("Placement") is None:
+                continue
+
+            seen.add(name)
+            members.append(obj)
+
+        return members
+
+    def updateStoredPositions(self, fp, force=False):
+        if getattr(self, "_busy", False):
+            return
+
+        if not force and (not hasattr(fp, "Suppressed") or not fp.Suppressed):
+            App.Console.PrintWarning(
+                "Assembly: 'updateStoredPositions' is only available while suppressed.\n"
+            )
+            return
+
+        members = self._validMembers(fp)
+        if len(members) < 2:
+            self._write_rigid_placements(fp, [])
+            App.Console.PrintError("Assembly: Rigid group needs at least 2 valid components.\n")
+            return
+
+        if getattr(fp, "ObjectsToRigidGroup", None) != members:
+            self._busy = True
+            try:
+                fp.ObjectsToRigidGroup = members
+            finally:
+                self._busy = False
+
+        anchor = members[0]
+        anchorPlc = anchor.Placement
+        placements = []
+
+        for member in members:
+            placements.append(anchorPlc.inverse() * member.Placement)
+
+        self._write_rigid_placements(fp, placements)
+
+        App.Console.PrintMessage("Assembly: Rigid group positions updated.\n")
+
+    def _write_rigid_placements(self, fp, placements):
+        self._busy = True
+        try:
+            fp.setPropertyStatus("RigidPlacements", "-ReadOnly")
+            fp.RigidPlacements = placements
+            fp.setPropertyStatus("RigidPlacements", "ReadOnly")
+        finally:
+            self._busy = False
+
+    def restoreFromPlacements(self, fp):
+        members = self._validMembers(fp)
+        placements = getattr(fp, "RigidPlacements", None) or []
+        if len(members) < 2 or len(members) != len(placements):
+            App.Console.PrintWarning("Assembly: Rigid group sync broken, skipping restore.\n")
+            return
+
+        anchor = members[0]
+        anchorPlcNow = anchor.Placement
+        for obj, rel in zip(members, placements):
+            obj.Placement = anchorPlcNow * rel
+
+    def onChanged(self, fp, prop):
+        """Do something when a property has changed"""
+        if getattr(self, "_busy", False):
+            return
+
+        if prop == "ObjectsToRigidGroup":
+            self.updateStoredPositions(fp, True)
+            return
+
+        if prop == "Suppressed" and hasattr(fp, "Suppressed") and not fp.Suppressed:
+            self._busy = True
+            try:
+                self.restoreFromPlacements(fp)
+                assembly = self.getAssembly(fp)
+                if assembly:
+                    solveIfAllowed(assembly)
+            finally:
+                self._busy = False
+
+    def execute(self, fp):
+        """Do something when doing a recomputation, this method is mandatory"""
+        pass
+
+
+class ViewProviderRigidGroupJoint:
+    def __init__(self, vobj):
+        vobj.Proxy = self
+        vobj.addExtension("Gui::ViewProviderSuppressibleExtensionPython")
+
+    def getIcon(self):
+        return ":/icons/Assembly_CreateJointRigidGroup.svg"
+
+    def setupContextMenu(self, vobj, menu):
+        action = menu.addAction(App.Qt.translate("Assembly", "Update Stored Positions"))
+        action.triggered.connect(lambda: self._updateStoredPositions(vobj.Object))
+
+    def _updateStoredPositions(self, obj):
+        if hasattr(obj, "Proxy") and hasattr(obj.Proxy, "updateStoredPositions"):
+            obj.Proxy.updateStoredPositions(obj)
 
 
 ################ Grounded Joint object #################
@@ -2221,13 +2384,6 @@ class TaskAssemblyCreateJoint(QtCore.QObject):
     def addSelection(self, doc_name, obj_name, sub_name, mousePos):
         rootObj = App.getDocument(doc_name).getObject(obj_name)
 
-        # We do not need the full TNP string like :"Part.Body.Pad.;#a:1;:G0;XTR;:Hc94:8,F.Face6"
-        # instead we need : "Part.Body.Pad.Face6"
-        resolved = rootObj.resolveSubElement(sub_name, True)
-        sub_name = resolved[2]
-
-        sub_name = UtilsAssembly.fixBodyExtraFeatureInSub(doc_name, sub_name)
-
         comp, new_sub = UtilsAssembly.getComponentReference(self.assembly, rootObj, sub_name)
         if not comp:
             # Selection was not valid (not inside assembly or logic failed)
@@ -2277,12 +2433,6 @@ class TaskAssemblyCreateJoint(QtCore.QObject):
 
         rootObj = App.getDocument(doc_name).getObject(obj_name)
 
-        # Apply the same processing as in addSelection to ensure consistent comparison
-        resolved = rootObj.resolveSubElement(sub_name, True)
-        sub_name = resolved[2]
-
-        sub_name = UtilsAssembly.fixBodyExtraFeatureInSub(doc_name, sub_name)
-
         comp, new_sub = UtilsAssembly.getComponentReference(self.assembly, rootObj, sub_name)
         if not comp:
             return
@@ -2304,8 +2454,6 @@ class TaskAssemblyCreateJoint(QtCore.QObject):
         if not sub_name:
             self.presel_ref = None
             return
-
-        sub_name = UtilsAssembly.fixBodyExtraFeatureInSub(doc_name, sub_name)
 
         rootObj = App.getDocument(doc_name).getObject(obj_name)
 

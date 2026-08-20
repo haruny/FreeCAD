@@ -173,112 +173,112 @@ bool Document::checkOnCycle()
 
 bool Document::undo(const int id)
 {
-    if (d->iUndoMode != 0) {
-        if (id != 0) {
-            const auto it = mUndoMap.find(id);
-            if (it == mUndoMap.end()) {
-                return false;
-            }
-            if (it->second != d->activeUndoTransaction) {
-                while (!mUndoTransactions.empty() && mUndoTransactions.back() != it->second) {
-                    undo(0);
-                }
-            }
-        }
-
-        if (d->activeUndoTransaction) {
-            _commitTransaction(true);
-        }
-        if (mUndoTransactions.empty()) {
+    if (id != 0) {
+        const auto it = mUndoMap.find(id);
+        if (it == mUndoMap.end()) {
             return false;
         }
-        // redo
-        d->activeUndoTransaction = new Transaction(mUndoTransactions.back()->getID());
-        d->activeUndoTransaction->Name = mUndoTransactions.back()->Name;
-
-        {
-            Base::FlagToggler<bool> flag(d->undoing);
-            // applying the undo
-            mUndoTransactions.back()->apply(*this, false);
-
-            // save the redo
-            mRedoMap[d->activeUndoTransaction->getID()] = d->activeUndoTransaction;
-            mRedoTransactions.push_back(d->activeUndoTransaction);
-            d->activeUndoTransaction = nullptr;
-            d->bookedTransaction = 0;
-
-            mUndoMap.erase(mUndoTransactions.back()->getID());
-            delete mUndoTransactions.back();
-            mUndoTransactions.pop_back();
-        }
-
-        for (const auto& obj : d->objectArray) {
-            if (obj->testStatus(ObjectStatus::PendingTransactionUpdate)) {
-                obj->onUndoRedoFinished();
-                obj->setStatus(ObjectStatus::PendingTransactionUpdate, false);
+        if (it->second != d->activeUndoTransaction) {
+            while (!mUndoTransactions.empty() && mUndoTransactions.back() != it->second) {
+                undo(0);
             }
         }
-
-        signalUndo(*this);  // now signal the undo
-        signalBecameStable(*this);
-
-        return true;
     }
 
-    return false;
+    if (d->activeUndoTransaction) {
+        _commitTransaction(true);
+    }
+    if (mUndoTransactions.empty()) {
+        return false;
+    }
+    // redo
+    d->activeUndoTransaction = new Transaction(mUndoTransactions.back()->getID());
+    d->activeUndoTransaction->Name = mUndoTransactions.back()->Name;
+
+    {
+        Base::FlagToggler<bool> flag(d->undoing);
+        // applying the undo
+        mUndoTransactions.back()->apply(*this, false);
+
+        // save the redo
+        mRedoMap[d->activeUndoTransaction->getID()] = d->activeUndoTransaction;
+        mRedoTransactions.push_back(d->activeUndoTransaction);
+        d->activeUndoTransaction = nullptr;
+        d->bookedTransaction = 0;
+
+        mUndoMap.erase(mUndoTransactions.back()->getID());
+        delete mUndoTransactions.back();
+        mUndoTransactions.pop_back();
+    }
+
+    for (const auto& obj : d->objectArray) {
+        if (obj->testStatus(ObjectStatus::PendingTransactionUpdate)) {
+            obj->onUndoRedoFinished();
+            obj->setStatus(ObjectStatus::PendingTransactionUpdate, false);
+        }
+    }
+
+    signalUndo(*this);  // now signal the undo
+    signalBecameStable(*this);
+
+    return true;
 }
 
 bool Document::redo(const int id)
 {
-    if (d->iUndoMode != 0) {
-        if (id != 0) {
-            const auto it = mRedoMap.find(id);
-            if (it == mRedoMap.end()) {
-                return false;
-            }
-            while (!mRedoTransactions.empty() && mRedoTransactions.back() != it->second) {
-                redo(0);
-            }
+    if (id != 0) {
+        const auto it = mRedoMap.find(id);
+        if (it == mRedoMap.end()) {
+            return false;
         }
-
-        if (d->activeUndoTransaction) {
-            _commitTransaction(true);
+        while (!mRedoTransactions.empty() && mRedoTransactions.back() != it->second) {
+            redo(0);
         }
-
-        assert(mRedoTransactions.size() != 0);
-
-        // undo
-        d->activeUndoTransaction = new Transaction(mRedoTransactions.back()->getID());
-        d->activeUndoTransaction->Name = mRedoTransactions.back()->Name;
-
-        // do the redo
-        {
-            Base::FlagToggler<bool> flag(d->undoing);
-            mRedoTransactions.back()->apply(*this, true);
-
-            mUndoMap[d->activeUndoTransaction->getID()] = d->activeUndoTransaction;
-            mUndoTransactions.push_back(d->activeUndoTransaction);
-            d->activeUndoTransaction = nullptr;
-            d->bookedTransaction = 0;
-
-            mRedoMap.erase(mRedoTransactions.back()->getID());
-            delete mRedoTransactions.back();
-            mRedoTransactions.pop_back();
-        }
-
-        for (const auto& obj : d->objectArray) {
-            if (obj->testStatus(ObjectStatus::PendingTransactionUpdate)) {
-                obj->onUndoRedoFinished();
-                obj->setStatus(ObjectStatus::PendingTransactionUpdate, false);
-            }
-        }
-
-        signalRedo(*this);
-        signalBecameStable(*this);
-        return true;
     }
 
-    return false;
+    if (d->activeUndoTransaction) {
+        _commitTransaction(true);
+    }
+
+    assert(mRedoTransactions.size() != 0);
+
+    // undo
+    d->activeUndoTransaction = new Transaction(mRedoTransactions.back()->getID());
+    d->activeUndoTransaction->Name = mRedoTransactions.back()->Name;
+
+    // do the redo
+    {
+        Base::FlagToggler<bool> flag(d->undoing);
+        mRedoTransactions.back()->apply(*this, true);
+
+        mUndoMap[d->activeUndoTransaction->getID()] = d->activeUndoTransaction;
+        mUndoTransactions.push_back(d->activeUndoTransaction);
+        d->activeUndoTransaction = nullptr;
+        d->bookedTransaction = 0;
+
+        mRedoMap.erase(mRedoTransactions.back()->getID());
+        delete mRedoTransactions.back();
+        mRedoTransactions.pop_back();
+    }
+
+    for (const auto& obj : d->objectArray) {
+        if (obj->testStatus(ObjectStatus::PendingTransactionUpdate)) {
+            obj->onUndoRedoFinished();
+            obj->setStatus(ObjectStatus::PendingTransactionUpdate, false);
+        }
+    }
+
+    signalRedo(*this);
+    signalBecameStable(*this);
+    return true;
+}
+
+Base::ScopeGuard Document::setDefiningTransaction()
+{
+    d->definingTransaction = true;
+    return Base::ScopeGuard([this]() {
+        d->definingTransaction = false;
+    });
 }
 
 void Document::changePropertyOfObject(TransactionalObject* obj,
@@ -288,7 +288,7 @@ void Document::changePropertyOfObject(TransactionalObject* obj,
     if (!prop || !obj || !obj->isAttachedToDocument()) {
         return;
     }
-    if ((d->iUndoMode != 0) && !isPerformingTransaction() && !d->activeUndoTransaction) {
+    if (!isPerformingTransaction() && !d->activeUndoTransaction) {
         if (!testStatus(Restoring) || testStatus(Importing)) {
             if (d->bookedTransaction == NullTransaction) {
                 d->bookedTransaction = GetApplication().getGlobalTransaction();
@@ -307,6 +307,16 @@ void Document::renamePropertyOfObject(TransactionalObject* obj,
 {
     changePropertyOfObject(obj, prop, [this, obj, prop, oldName]() {
         d->activeUndoTransaction->renameProperty(obj, prop, oldName);
+    });
+}
+
+void Document::arrangeMovePropertyOfObject(TransactionalObject* obj,
+                                           const Property* prop,
+                                           TransactionalObject* targetObj,
+                                           Property* newProp)
+{
+    changePropertyOfObject(obj, prop, [this, obj, prop, targetObj, newProp]() {
+        d->activeUndoTransaction->arrangeMoveProperty(obj, prop, targetObj, newProp);
     });
 }
 
@@ -386,9 +396,6 @@ int Document::_openTransaction(std::string name, int id)
         if (FC_LOG_INSTANCE.isEnabled(FC_LOGLEVEL_LOG)) {
             FC_WARN("Cannot open transaction while transacting");
         }
-        return 0;
-    }
-    if (d->iUndoMode == 0) {
         return 0;
     }
 
@@ -499,8 +506,8 @@ bool Document::transacting() const
 
 void Document::_checkTransaction(DocumentObject* pcDelObj, const Property* What, int line)
 {
-    // if the undo is active but no transaction open, open one!
-    if (d->iUndoMode == 0 || isPerformingTransaction() || d->activeUndoTransaction) {
+    // if no transaction open, open one!
+    if (isPerformingTransaction() || d->activeUndoTransaction) {
         return;
     }
 
@@ -823,20 +830,6 @@ int Document::getAvailableRedos(const int id) const
     return static_cast<int>(mRedoTransactions.size());
 }
 
-void Document::setUndoMode(const int iMode)
-{
-    if ((d->iUndoMode != 0) && (iMode == 0)) {
-        clearUndos();
-    }
-
-    d->iUndoMode = iMode;
-}
-
-int Document::getUndoMode() const
-{
-    return d->iUndoMode;
-}
-
 unsigned int Document::getUndoMemSize() const
 {
     return d->UndoMemSize;
@@ -932,7 +925,7 @@ void Document::onBeforeChangeProperty(const TransactionalObject* Who, const Prop
     if (Who->isDerivedFrom<DocumentObject>()) {
         signalBeforeChangeObject(*static_cast<const DocumentObject*>(Who), *What);
     }
-    if (!d->rollback && !globalIsRelabeling) {
+    if (!d->rollback && !globalIsRelabeling && !d->definingTransaction) {
         _checkTransaction(nullptr, What, __LINE__);
         if (d->activeUndoTransaction) {
             d->activeUndoTransaction->addObjectChange(Who, What);
@@ -2008,7 +2001,7 @@ bool Document::saveToFile(const char* filename) const
     // check if file is writeable, then block the save if it is not.
     Base::FileInfo originalFileInfo(nativePath);
     if (originalFileInfo.exists() && !originalFileInfo.isWritable()) {
-        throw Base::FileException("Unable to save document because file is marked as read-only or write permission is not available.", originalFileInfo);
+        throw Base::FileWritePermissionException(originalFileInfo);
     }
 
     // make a tmp. file where to save the project data first and then rename to
@@ -2400,7 +2393,7 @@ bool Document::isAutoCreated() const {
 
 bool Document::isReadOnlyFile() const {
     std::string filename = FileName.getValue();
-    Base::FileInfo documentFileInfo(filename);  
+    Base::FileInfo documentFileInfo(filename);
     return documentFileInfo.exists() && !documentFileInfo.isWritable();
 }
 
@@ -2586,6 +2579,31 @@ static void buildDependencyList(const std::vector<DocumentObject*>& objectArray,
         depList->clear();
     }
 
+    auto getOutListFineGrained = [](DocumentObject* obj, int op) {
+        // Convert an OutListProp to a regular outlist with only DocumentObject*
+        std::vector<DocumentObject*> outList;
+        std::unordered_set<DocumentObject*> outListSet; // For O(1) avg lookup
+
+        std::vector<DepEdge> outListProp = obj->getOutListProp(op);
+        for (const auto& [objFrom, propFrom, objTo, propNameTo] : outListProp) {
+            // Add dependencies on HEAD
+            if (propNameTo.empty()) {
+                if (outListSet.insert(objTo).second) {
+                    outList.push_back(objTo);
+                }
+                continue;
+            }
+            // Add additional dependencies on specific properties unless it is
+            // an input property.  This to avoid over dependencies.
+            if (!outListSet.contains(objTo) && !objTo->isInputProperty(propNameTo)) {
+                outListSet.insert(objTo);
+                outList.push_back(objTo);
+            }
+        }
+
+        return outList;
+    };
+
     const int op = ((options & Document::DepNoXLinked) != 0) ? DocumentObject::OutListNoXLinked : 0;
     for (auto obj : objectArray) {
         objs.push_back(obj);
@@ -2616,7 +2634,12 @@ static void buildDependencyList(const std::vector<DocumentObject*>& objectArray,
             }
 
             auto& outList = outLists[objF];
-            outList = objF->getOutList(op);
+            if (GetApplication().isFineGrainedRecomputeEnabled()) {
+                outList = getOutListFineGrained(objF, op);
+            }
+            else {
+                outList = objF->getOutList(op);
+            }
             objs.insert(objs.end(), outList.begin(), outList.end());
         }
     }
@@ -2868,6 +2891,8 @@ int Document::recompute(const std::vector<DocumentObject*>& objs,
 
     signalBeforeRecompute(*this);
 
+    bool fineGrained = GetApplication().isFineGrainedRecomputeEnabled();
+
     //////////////////////////////////////////////////////////////////////////
     // FIXME Comment by Realthunder:
     // the topologicalSrot() below cannot handle partial recompute, haven't got
@@ -2940,10 +2965,22 @@ int Document::recompute(const std::vector<DocumentObject*>& objs,
                 }
                 if (obj->isTouched() || doRecompute) {
                     signalRecomputedObject(*obj);
-                    obj->purgeTouched();
-                    // set all dependent object touched to force recompute
-                    for (auto inObjIt : obj->getInList()) {
-                        inObjIt->enforceRecompute();
+                    if (fineGrained) {
+                        // set all dependent objects touched based on properties
+                        std::vector<DepEdge> inList = obj->getInListProp();
+                        for (auto& [objFrom, propFrom, objTo, propTo] : inList) {
+                            if (obj->touchedProps.contains(propTo) || propTo.empty()) {
+                                objFrom->enforceRecompute(propFrom);
+                            }
+                        }
+                        obj->purgeTouched();
+                    }
+                    else {
+                        obj->purgeTouched();
+                        // set all dependent objects touched to force recompute
+                        for (auto inObjIt : obj->getInList()) {
+                            inObjIt->enforceRecompute();
+                        }
                     }
                 }
                 if (seq) {
@@ -3413,7 +3450,10 @@ void Document::_addObject(DocumentObject* pcObject, const char* pObjectName, Add
     // If we are restoring, don't set the Label object now; it will be restored later. This is to
     // avoid potential duplicate label conflicts later.
     if (options.testFlag(AddObjectOption::SetNewStatus) && !d->StatusBits.test(Restoring)) {
-        pcObject->Label.setValue(ObjectName);
+        const std::string labelName = Base::Tools::isNullOrEmpty(pObjectName)
+            ? ObjectName
+            : Base::Tools::getIdentifier(pObjectName);
+        pcObject->Label.setValue(labelName);
     }
 
     // Call the object-specific initialization
@@ -3744,18 +3784,6 @@ DocumentObject* Document::moveObject(DocumentObject* obj, const bool recursive)
     Document* that = obj->getDocument();
     if (that == this) {
         return nullptr;  // nothing todo
-    }
-
-    // True object move without copy is only safe when undo is off on both
-    // documents.
-    if (!recursive && (d->iUndoMode == 0) && (that->d->iUndoMode == 0) && !that->d->rollback) {
-        // all object of the other document that refer to this object must be nullified
-        that->breakDependency(obj, false);
-        const std::string objname = getUniqueObjectName(obj->getNameInDocument());
-        that->_removeObject(obj);
-        this->_addObject(obj, objname.c_str());
-        obj->setDocument(this);
-        return obj;
     }
 
     std::vector<DocumentObject*> deps;

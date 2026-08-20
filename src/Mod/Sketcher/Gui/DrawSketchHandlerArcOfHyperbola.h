@@ -33,7 +33,6 @@
 #include <Mod/Sketcher/App/SketchObject.h>
 
 #include "DrawSketchHandler.h"
-#include "GeometryCreationMode.h"
 #include "Utils.h"
 #include "ViewProviderSketch.h"
 #include "SnapManager.h"
@@ -60,8 +59,6 @@
 
 namespace SketcherGui
 {
-
-extern GeometryCreationMode geometryCreationMode;  // defined in CommandCreateGeo.cpp
 
 class DrawSketchHandlerArcOfHyperbola;
 
@@ -512,6 +509,7 @@ void DSHArcOfHyperbolaController::doEnforceControlParameters(Base::Vector2d& onS
 
             if (secondRadiusParam->isSet) {
                 minorRadius = secondRadiusParam->getValue();
+                handler->minorRadius = minorRadius;
                 handler->minorRadiusSet = true;
                 if (minorRadius < Precision::Confusion() && secondRadiusParam->hasFinishedEditing) {
                     handler->minorRadiusSet = false;

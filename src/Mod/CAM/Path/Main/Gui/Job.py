@@ -37,6 +37,11 @@ import Path.Main.Gui.JobDlg as PathJobDlg
 import Path.Main.Job as PathJob
 import Path.Main.Stock as PathStock
 import Path.Tool.Gui.Controller as PathToolControllerGui
+
+# Must stay an eager, top-level import (not lazy/local): importing this
+# module registers the document-load observer that prompts about stale
+# tool updates on open, which must happen before any document opens.
+import Path.Tool.Gui.UpdateDocumentToolsDlg as PathUpdateToolsGui
 import PathScripts.PathUtils as PathUtils
 from Path.Tool.toolbit.ui.selector import ToolBitSelector
 from Machine.models import MachineFactory
@@ -364,8 +369,16 @@ class ViewProvider:
         action.triggered.connect(self._editInContextMenuTriggered)
         menu.addAction(action)
 
+        updateAction = QtGui.QAction(translate("CAM_Job", "Update Tools from Library"), menu)
+        updateAction.setIcon(QtGui.QIcon(":/icons/CAM_UpdateDocumentTools.svg"))
+        updateAction.triggered.connect(self._updateToolsFromLibraryTriggered)
+        menu.addAction(updateAction)
+
     def _editInContextMenuTriggered(self, checked):
         self.setEdit()
+
+    def _updateToolsFromLibraryTriggered(self, checked):
+        PathUpdateToolsGui.update_tools_from_gui(self.obj)
 
 
 class MaterialDialog(QtWidgets.QDialog):
@@ -757,26 +770,18 @@ class StockFromExistingEdit(StockEdit):
         # dropdown list. This is important because the `currentIndexChanged` signal
         # will in the end result in the stock object being recreated in `getFields`
         # method, discarding any changes made (like position in respect to origin).
-        try:
-            self.form.stockExisting.blockSignals(True)
-            self.form.stockExisting.clear()
-            stockName = obj.Stock.Label if obj.Stock else None
-            index = -1
-            for i, solid in enumerate(self.candidates(obj)):
-                self.form.stockExisting.addItem(solid.Label, solid)
-                label = "{}-{}".format(self.StockLabelPrefix, solid.Label)
+        self.form.stockExisting.blockSignals(True)
+        self.form.stockExisting.clear()
 
-                # stockName has index suffix (since cloned), label has no index
-                # => ridgid string comparison fails
-                # Instead of ridgid string comparison use partial (needle in haystack)
-                # string comparison
-                # if label == stockName: # ridgid string comparison
-                if label in stockName:  # partial string comparison
-                    index = i
+        stockBaseName = obj.Stock.Objects[0].Name if getattr(obj.Stock, "Objects", None) else None
+        index = 0
+        for i, solid in enumerate(self.candidates(obj)):
+            self.form.stockExisting.addItem(solid.Label, solid)
+            if stockBaseName == solid.Name:
+                index = i
 
-            self.form.stockExisting.setCurrentIndex(index if index != -1 else 0)
-        finally:
-            self.form.stockExisting.blockSignals(False)
+        self.form.stockExisting.setCurrentIndex(index)
+        self.form.stockExisting.blockSignals(False)
 
         if not self.IsStock(obj):
             self.getFields(obj)

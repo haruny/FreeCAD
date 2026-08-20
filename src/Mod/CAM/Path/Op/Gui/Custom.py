@@ -25,6 +25,7 @@ import FreeCAD
 import FreeCADGui
 import Path.Op.Custom as PathCustom
 import Path.Op.Gui.Base as PathOpGui
+from Path.Main.Gui.Editor import CodeEditor
 
 from PySide import QtGui
 from PySide.QtCore import QT_TRANSLATE_NOOP
@@ -50,37 +51,46 @@ class TaskPanelOpPage(PathOpGui.TaskPanelPage):
         enumTups = PathCustom.ObjectCustom.propertyEnumerations(dataType="raw")
 
         self.populateCombobox(form, enumTups, comboToPropertyMap)
+
+        # add editor with lines enumeration
+        self.editor = CodeEditor()
+        toolTip = (
+            "Form to enter G-code"
+            "\n\nTo add an expression, surround string with characters '{{expression}}'"
+            "\nExample:"
+            "\nG0 Z{{VarSet.HeightZ.Value+5}}"
+            "\nG0 X{{Profile.Path.Commands[3].x}} Y{{Profile.Path.Commands[3].y}}"
+        )
+        self.editor.setToolTip(toolTip)
+        form.txtGCodeBox.layout().removeWidget(form.txtGCode)
+        form.txtGCode.deleteLater()
+        form.txtGCodeBox.layout().addWidget(self.editor)
+
         return form
 
     def getFields(self, obj):
         """getFields(obj) ... transfers values from UI to obj's properties"""
-        self.updateToolController(obj, self.form.toolController)
-        self.updateCoolant(obj, self.form.coolantController)
         if obj.Source != str(self.form.source.currentData()):
             obj.Source = str(self.form.source.currentData())
         if obj.GcodeFile != str(self.form.fileName.text()):
             obj.GcodeFile = str(self.form.fileName.text())
-        if obj.Gcode != str(self.form.txtGCode.toPlainText().split("\n")):
-            obj.Gcode = self.form.txtGCode.toPlainText().split("\n")
+        if obj.Gcode != str(self.editor.toPlainText().split("\n")):
+            obj.Gcode = self.editor.toPlainText().split("\n")
 
     def setFields(self, obj):
         """setFields(obj) ... transfers obj's property values to UI"""
-        self.setupToolController(obj, self.form.toolController)
-        self.setupCoolant(obj, self.form.coolantController)
         self.selectInComboBox(obj.Source, self.form.source)
         self.form.fileName.setText(obj.GcodeFile)
-        self.form.txtGCode.setText("\n".join(obj.Gcode))
+        self.editor.setText("\n".join(obj.Gcode))
 
         self.updateVisibility()
 
     def getSignalsForUpdate(self, obj):
         """getSignalsForUpdate(obj) ... return list of signals for updating obj"""
         signals = []
-        signals.append(self.form.toolController.currentIndexChanged)
-        signals.append(self.form.coolantController.currentIndexChanged)
         signals.append(self.form.source.currentIndexChanged)
         signals.append(self.form.fileName.editingFinished)
-        signals.append(self.form.txtGCode.textChanged)
+        signals.append(self.editor.textChanged)
 
         return signals
 

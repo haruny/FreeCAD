@@ -548,6 +548,8 @@ SET(Part_SRCS
     BRepMesh.h
     BRepOffsetAPI_MakeOffsetFix.cpp
     BRepOffsetAPI_MakeOffsetFix.h
+    ShapeAnalysis_FreeBoundsFix.cpp
+    ShapeAnalysis_FreeBoundsFix.h
     BSplineCurveBiArcs.cpp
     BSplineCurveBiArcs.h
     CrossSection.cpp
@@ -612,6 +614,8 @@ SET(Part_SRCS
     FaceMakerBullseye.h
     FaceMakerBuildFace.cpp
     FaceMakerBuildFace.h
+    FaceMakerUnified.cpp
+    FaceMakerUnified.h
     WireJoiner.cpp
     WireJoiner.h
 )

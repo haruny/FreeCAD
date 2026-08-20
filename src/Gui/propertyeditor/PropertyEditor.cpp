@@ -46,6 +46,7 @@
 #include "Tree.h"
 #include "PropertyEditor.h"
 #include "Dialogs/DlgAddProperty.h"
+#include "Dialogs/DlgDocumentObject.h"
 #include "MainWindow.h"
 #include "PropertyItemDelegate.h"
 #include "PropertyModel.h"
@@ -792,6 +793,65 @@ void PropertyEditor::renameProperty(const App::Property& prop)
     blockCollapseAll();
 }
 
+static bool movePossible(const App::SubObjectT& subObj, const App::Property* prop)
+{
+    App::DocumentObject* obj = subObj.getSubObject();
+    if (obj == nullptr) {
+        return false;
+    }
+    if (obj->getPropertyByName(prop->getName())) {
+        FC_ERR(obj->getFullName() << " already has property " << prop->getName());
+        return false;
+    }
+    return true;
+}
+
+static App::Document* propertyDocument(App::PropertyContainer* cont)
+{
+    if (auto* doc = freecad_cast<App::Document*>(cont)) {
+        return doc;
+    }
+    if (auto* docObj = freecad_cast<App::DocumentObject*>(cont)) {
+        return docObj->getDocument();
+    }
+    if (auto* vp = freecad_cast<Gui::ViewProviderDocumentObject*>(cont)) {
+        return vp->getDocument()->getDocument();
+    }
+    return nullptr;
+}
+
+static void moveProperties(std::unordered_set<App::Property*>& props, QList<App::SubObjectT>& subObjects)
+{
+    if (subObjects.empty() || props.empty()) {
+        return;
+    }
+
+    for (auto& prop : props) {
+        if (std::ranges::any_of(subObjects, [&prop](const App::SubObjectT& subObj) {
+                return !movePossible(subObj, prop);
+            })) {
+            return;
+        }
+    }
+
+    int tid = 0;
+    for (auto& prop : props) {
+        auto* obj = freecad_cast<App::DocumentObject*>(prop->getContainer());
+        if (!obj) {
+            FC_ERR(
+                "Cannot move property " << prop->getName()
+                                        << " because its container is not a DocumentObject"
+            );
+            continue;
+        }
+        if (App::Document* doc = propertyDocument(prop->getContainer())) {
+            tid = doc->openTransaction("Move Property");
+        }
+        obj->moveDynamicProperty(prop, subObjects[0].getObject());
+    }
+    App::GetApplication().commitTransaction(tid);
+}
+
 enum MenuAction
 {
     MA_AutoCollapse,
@@ -805,11 +865,13 @@ enum MenuAction
     MA_RemoveProp,
     MA_RenameProp,
     MA_AddProp,
+    MA_MoveProp,
     MA_EditPropTooltip,
     MA_EditPropGroup,
     MA_ShowPropUses,
     MA_Transient,
     MA_Output,
+    MA_Input,
     MA_NoRecompute,
     MA_ReadOnly,
     MA_Hidden,
@@ -1143,6 +1205,16 @@ void PropertyEditor::contextMenuEvent(QContextMenuEvent*)
         menu.addAction(tr("Property Uses"))->setData(QVariant(MA_ShowPropUses));
     }
 
+    auto canBeMoved = [](const App::Property* prop) {
+        auto* obj = freecad_cast<App::DocumentObject*>(prop->getContainer());
+        return obj && prop->testStatus(App::Property::PropDynamic)
+            && !prop->testStatus(App::Property::LockDynamic);
+    };
+
+    if (props.size() > 0 && std::ranges::all_of(props, canBeMoved)) {
+        menu.addAction(tr("Move Property"))->setData(QVariant(MA_MoveProp));
+    }
+
     // add a separator between adding/removing properties and the rest
     menu.addSeparator();
 
@@ -1200,6 +1272,7 @@ void PropertyEditor::contextMenuEvent(QContextMenuEvent*)
 
         ACTION_SETUP(Hidden);
         ACTION_SETUP(Output);
+        ACTION_SETUP(Input);
         ACTION_SETUP(NoRecompute);
         ACTION_SETUP(ReadOnly);
         ACTION_SETUP(Transient);
@@ -1258,6 +1331,7 @@ void PropertyEditor::contextMenuEvent(QContextMenuEvent*)
             ACTION_CHECK(Transient);
             ACTION_CHECK(ReadOnly);
             ACTION_CHECK(Output);
+            ACTION_CHECK(Input);
             ACTION_CHECK(Hidden);
             ACTION_CHECK(EvalOnRestore);
             ACTION_CHECK(CopyOnChange);
@@ -1427,6 +1501,18 @@ void PropertyEditor::contextMenuEvent(QContextMenuEvent*)
             reportPropUses(*props.begin());
             break;
         }
+        case MA_MoveProp: {
+            Gui::Dialog::DlgDocumentObject dlg(Gui::getMainWindow());
+            App::Property* prop = *props.begin();
+            auto* obj = freecad_cast<App::DocumentObject*>(prop->getContainer());
+            dlg.init(obj);
+            if (dlg.exec() == QDialog::Rejected) {
+                break;
+            }
+            QList<App::SubObjectT> subObjects = dlg.currentSubObjects();
+            moveProperties(props, subObjects);
+            break;
+        }
         default:
             break;
     }
@@ -1501,19 +1587,6 @@ QModelIndex PropertyEditor::indexResizable(QPoint mouse_pos)
         }
     }
     return QModelIndex();
-}
-App::Document* PropertyEditor::propertyDocument(App::PropertyContainer* cont) const
-{
-    if (auto* doc = dynamic_cast<App::Document*>(cont)) {
-        return doc;
-    }
-    if (auto* docObj = dynamic_cast<App::DocumentObject*>(cont)) {
-        return docObj->getDocument();
-    }
-    if (auto* vp = dynamic_cast<ViewProviderDocumentObject*>(cont)) {
-        return vp->getDocument()->getDocument();
-    }
-    return nullptr;
 }
 
 #include "moc_PropertyEditor.cpp"

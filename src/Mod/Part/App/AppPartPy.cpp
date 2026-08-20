@@ -119,6 +119,24 @@ extern const char* BRepBuilderAPI_FaceErrorText(BRepBuilderAPI_FaceError fe);
 namespace Part
 {
 
+namespace
+{
+void warnDeprecatedImportMethod(const char* methodName, const char* replacement)
+{
+    if (!Base::warnDeprecatedPythonApi(
+            "Method",
+            methodName,
+            Base::PythonApiDeprecation {
+                .deprecatedIn = "26.3",
+                .removedIn = "27.2",
+                .replacement = replacement,
+            }
+        )) {
+        throw Py::Exception();
+    }
+}
+}  // namespace
+
 PartExport void getPyShapes(PyObject* obj, std::vector<TopoShape>& shapes)
 {
     if (!obj) {
@@ -220,11 +238,14 @@ PartExport std::list<TopoDS_Edge> sort_Edges(double tol3d, std::list<TopoDS_Edge
             else if (pEI->v2.SquareDistance(last) <= tol3d) {
                 last = pEI->v1;
                 Standard_Real first, last;
+                BRepLib::BuildCurves3d(pEI->edge);
                 const Handle(Geom_Curve) & curve = BRep_Tool::Curve(pEI->edge, first, last);
-                first = curve->ReversedParameter(first);
-                last = curve->ReversedParameter(last);
-                TopoDS_Edge edgeReversed = BRepBuilderAPI_MakeEdge(curve->Reversed(), last, first);
-                sorted.push_back(edgeReversed);
+                if (!curve.IsNull()) {
+                    first = curve->ReversedParameter(first);
+                    last = curve->ReversedParameter(last);
+                    TopoDS_Edge edgeReversed = BRepBuilderAPI_MakeEdge(curve->Reversed(), last, first);
+                    sorted.push_back(edgeReversed);
+                }
                 edges.erase(pEI->it);
                 edge_points.erase(pEI);
                 pEI = edge_points.begin();
@@ -233,11 +254,14 @@ PartExport std::list<TopoDS_Edge> sort_Edges(double tol3d, std::list<TopoDS_Edge
             else if (pEI->v1.SquareDistance(first) <= tol3d) {
                 first = pEI->v2;
                 Standard_Real first, last;
+                BRepLib::BuildCurves3d(pEI->edge);
                 const Handle(Geom_Curve) & curve = BRep_Tool::Curve(pEI->edge, first, last);
-                first = curve->ReversedParameter(first);
-                last = curve->ReversedParameter(last);
-                TopoDS_Edge edgeReversed = BRepBuilderAPI_MakeEdge(curve->Reversed(), last, first);
-                sorted.push_front(edgeReversed);
+                if (!curve.IsNull()) {
+                    first = curve->ReversedParameter(first);
+                    last = curve->ReversedParameter(last);
+                    TopoDS_Edge edgeReversed = BRepBuilderAPI_MakeEdge(curve->Reversed(), last, first);
+                    sorted.push_front(edgeReversed);
+                }
                 edges.erase(pEI->it);
                 edge_points.erase(pEI);
                 pEI = edge_points.begin();
@@ -449,12 +473,12 @@ public:
         add_varargs_method(
             "open",
             &Module::open,
-            "open(string) -- Create a new document and load the file into the document."
+            "open(string) -- Deprecated. Use Import.open(string) instead."
         );
         add_varargs_method(
             "insert",
             &Module::insert,
-            "insert(string,string) -- Insert the file into the given document."
+            "insert(string,string) -- Deprecated. Use Import.insert(string,string) instead."
         );
         add_varargs_method(
             "export",
@@ -833,6 +857,8 @@ private:
             throw Py::RuntimeError("No file extension");
         }
 
+        warnDeprecatedImportMethod("Part.open", "Import.open");
+
         if (file.hasExtension({"stp", "step"})) {
             // create new document and add Import feature
             App::Document* pcDoc = App::GetApplication().newDocument();
@@ -879,6 +905,8 @@ private:
             throw Py::RuntimeError("No file extension");
         }
 
+        warnDeprecatedImportMethod("Part.insert", "Import.insert");
+
         App::Document* pcDoc = App::GetApplication().getDocument(DocName);
         if (!pcDoc) {
             pcDoc = App::GetApplication().newDocument(DocName);
@@ -894,7 +922,6 @@ private:
             pcDoc->recompute();
         }
         else {
-            FC_WARN("Importing BREP via 'Part' is deprecated. Use 'ImportGui' instead.");
             TopoShape shape;
             shape.read(EncodedName.c_str());
 

@@ -27,6 +27,7 @@
 #include <CXX/Objects.hxx>
 #include <Base/Observer.h>
 #include <Base/Persistence.h>
+#include <Base/Tools.h>
 #include <Base/Type.h>
 #include <Base/Handle.h>
 #include <Base/Bitmask.h>
@@ -396,6 +397,19 @@ public:
      * @param[in, out] out: The output stream to write to.
      */
     void exportGraphviz(std::ostream& out) const;
+
+    /**
+     * @brief Write the dependency graph of this document on the property
+     * level.
+     *
+     * The Graphviz output represents dependencies between properties
+     * (fine-grained recompute) instead of document objects.
+     *
+     * The output is in the DOT format of Graphviz.
+     *
+     * @param[in, out] out: The output stream to write to.
+     */
+    void exportGraphvizProp(std::ostream& out) const;
 
     /**
      * @brief Import objects from a stream.
@@ -854,19 +868,6 @@ public:
      * @{
      */
 
-    /**
-     * @brief Set the level of Undo/Redo.
-     *
-     * A mode of 0 disables Undo/Redo completely, while a nonzero value turns
-     * it on.
-     *
-     * @param[in] iMode The Undo/Redo mode.
-     */
-    void setUndoMode(int iMode);
-
-    /// Get the Undo/Redo mode.
-    int getUndoMode() const;
-
     /// Set the transaction mode.
     void setTransactionMode(int iMode);
 
@@ -1041,8 +1042,8 @@ public:
      *
      * @warning This function is only for internal use.
      */
-
     void addOrRemovePropertyOfObject(TransactionalObject* obj, const Property* prop, bool add);
+
     /**
      * @brief Register that a property of an object has been renamed in a transaction.
      *
@@ -1053,6 +1054,17 @@ public:
      * @warning This function is only for internal use.
      */
     void renamePropertyOfObject(TransactionalObject* obj, const Property* prop, const char* newName);
+
+    /**
+     * @brief Register in a transaction that a property move has been arranged.
+     *
+     * @param[in] obj The object whose property is moved.
+     * @param[in] toBeMovedProp The property that is moved.
+     * @param[in] target The object to which the property is moved.
+     * @param[in] newProp The new property in the target object.
+     */
+    void arrangeMovePropertyOfObject(TransactionalObject* obj, const Property* toBeMovedProp,
+                                     TransactionalObject* target, Property* newProp);
     /// @}
 
     /** @name Dependency items.
@@ -1458,6 +1470,7 @@ protected:
 private:
     void changePropertyOfObject(TransactionalObject* obj, const Property* prop,
                                 const std::function<void()>& changeFunc);
+    [[nodiscard]] Base::ScopeGuard setDefiningTransaction();
 
 private:
     // # Data Member of the document
